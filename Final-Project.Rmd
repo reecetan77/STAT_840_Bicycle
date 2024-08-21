@@ -1,0 +1,877 @@
+---
+title: '***The effects of weather on bicycle rentals from 2011 to 2012***'
+header-includes:
+  - \usepackage{placeins}
+  - \usepackage{amsmath}
+author: |
+  Tanner Reece \
+  Department of Biostatistics \
+  University of Kansas
+date: "`r Sys.Date()`"
+font-size: 16pt
+output:
+  pdf_document:
+    latex_engine: xelatex
+bibliography: final_project_citations.bib
+csl: pnas.csl
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, autoprint = TRUE,fig.pos = "!h", tidy.opts=list(width.cutoff = 30), tidy = TRUE)
+
+library(tidyverse)
+library(ggcorrplot)
+library(GGally)
+library(nlme)
+library(merTools)
+library(sjtable2df)
+library(sjPlot)
+library(knitr)
+library(modelr)
+library(multcomp)
+library(psych)
+library(qqplotr)
+library(coxed)
+library(ggdist)
+library(patchwork)
+
+knitr::opts_knit$set(root.dir = "/Users/Tanner/Desktop/KU Stat Courses/STAT 840 (Linear Regression)/Final Project")
+
+knitr::knit_hooks$set(plot = function(x, options)  {
+  paste0(knitr::hook_plot_tex(x, options), "\n\\FloatBarrier\n")
+})
+
+```
+
+\newpage
+
+# Abstract
+
+|   With the rise of electric bicycles in urban areas being used for both leisure and commuting, companies have a vested interest in understanding what factors influence bike rental rates. The objective of this study was to understand how weather conditions and temperature impacted bicycle rental numbers. Data were provided by the Indian transportation company, Yulu, and were collected hourly from 2011 to 2012 using a mobile application. A hierarchical linear models approach was used to test for effects of weather, temperature, and windspeed on hourly-bike counts. Results indicated that although average bike rental numbers were higher in clear conditions and misty/cloudy conditions compared to light rain/snow conditions, the effect of temperature did not change between the different weather conditions. Future work should analyze person- and/or ride-level predictors to better inform marketing strategies as well as bike rental location and size.
+
+
+\newpage
+
+# Introduction
+
+|   With the rise of electric bicycles riding has become a viable form of commuting within urban areas in recent years @biju_bicycles_2018 and bike rental companies are becoming increasingly invested in the factors that drive bicycle rentals @flynn_weather_2012. Although bicycle riding provides a more environmentally-friendly means of transportation and is a low-impact form of aerobic exercise, bicycle riders are more exposed to the elements and spend more time commuting than their car-driving peers. Thus, it is of direct interest to bike rental companies as to how weather affects bike renting tendencies.
+|   The data set we will be using comes to us from the Yulu company by way of the data set sharing website Kaggle (<https://www.kaggle.com/datasets/sreekargv/bike-rentals>). Briefly, contained in this data set are 12 variables recorded by the Yulu bicycle transportation company in India. Yulu was interested in the variables that influenced bicycle rental business during a dip in business in 2011. The company recorded features hourly for each bike rental occurrence during nearly a 2 year period including, but not limited to, date-time, weather, and number of casual riders. Data were collected from the mobile app that users must link to the bike to use. Although speculative, it seems plausible that an individual's tendency to ride in a warm temperature weather might depend on rain, sleet, mist, etc. For this project, I hypothesize that there will be a significant interaction between weather and temperature. Specifically, I hypothesize that the relationship between total rider counts and temperature will increase as the weather changes from colder, rainier conditions to warmer, calmer conditions. The bike_rentals data set has 12 variables including 1 datetime, 4 unordered factor variables, 4 continuous variables, and 3 count variables. For this regression analyses, we will test several models involving predictors of season, weather, temperature, wind speed in the prediction of number of rides (count). Results will be inspected carefully given that our outcome measure is count data and unlikely to be normally distributed.
+
+# Methods
+
+## Data Source, Data Preparation, and Descriptive Statistics
+
+|   Data were retrieved from an online source and can be found at the following link: <https://www.kaggle.com/datasets/sreekargv/bike-rentals>. The number of electric bicycles rented were recorded hourly from January 2011 through December 2012. In addition to the number of bicycles rented (**count**), windspeed (km/h) and temperature (both real temperature, **temp**, and feels-like temperature, **atemp**, Celsius) were recorded. Given the hierarchical nature of these data, (i.e. multiple observations from a given day, multiple days in a season), our temperature variable likely contains both within- and between-season sources of variability. Not only does temperature fluctuate throughout the season (within-season variability), but some seasons tend to be hotter or colder than others, on average (between-season variability). To understand how the variance is partitioned in this predictor, an unconditional mixed-effects model was used with feels-like temperature as the outcome variable and season as the random grouping variable. The intra-class correlation coefficient is a metric used to quantify the percentage of total variability that occurs between levels of the grouping variable. In this instance, the icc indicated that approximately 58% of the variability in feels-like temperature occurred at the between-season level. With this in mind, two new variables were created to more adequately describe and account for the variability in bike rental numbers. First, the feels-like temperature was season-mean centered by subtracting the season feels like temperature mean from the feels-like temperature variable, **atemp_season_c**. This season-mean centered variable now represents what the feels-like temperature is with respect to the season we are in. For example, a score of 0 on this variable indicates the feels-like temperature is typical for a given season and scores of +/- 10 indicate the feels like temperature is 10 degrees above or below of the season average feels-like temperature, respectively. This season-level centering procedures inherently removes between-season variability. To illustrate, a score of 0 in winter and in summer both are at the average feels like temperature for that season, but those averages are certainly very different. To reintroduce between-season variability, the season feels-like temperature means were reintroduced to the data as an additional season-level predictor. Finally, to aid in interpretation, these season feels-like temperature means were grand-mean centered by subtracting the overall feels-like temperature mean from all values. Thus, a value of 0 on this grand-mean centered value represents a season of overall average-temperature **atemp_season_mean_gmc**.
+
+```{r, echo = FALSE}
+#Loading in data frame
+ bike_rentals <- read.csv("bike_rentals.csv") %>% 
+#Modifying variables to proper data-types
+  mutate(datetime = as.POSIXct(datetime), 
+         date = as.Date(trunc(datetime, 'days')),
+         time = format(datetime, format = "%H:%M"),
+         season = factor(season, labels = c("Winter","Spring","Summer","Fall")),
+         weather = factor(weather, labels = c("Clear", "Misty/Cloudy","Light Snow/Rain","Heavy Snow/Rain"))) %>% 
+  #Dropping columns that aren't of interest for this project
+  dplyr::select(-holiday, -workingday, -humidity,-casual,-registered)
+
+#We only have one hour that had Heavy Snow/Rain out of the 10886 hours of data. I'm electing
+#to drop this case from the analysis so we can estimate temperature effects for each weather type
+bike_rentals <- bike_rentals %>% filter(weather != "Heavy Snow/Rain") %>% 
+  mutate(weather = factor(weather, labels = c("Clear", "Misty/Cloudy","Light Snow/Rain"))) %>% 
+  mutate(weather = droplevels(weather, exclude = "Heavy Snow/Rain"))
+
+#Because atemp is an hour-level variable (level-1), it is likely it also contains season-level variability (i.e. same seasons are hotter/colder on average). Running an unconditional model with temperature as the predictor helps establish how the variance is partitioned and might highlight a need to separate variances sources when modeling our outcome
+atemp_mod <- lmer(atemp ~ 1 + (1|season), data = bike_rentals) %>% VarCorr() %>% as_tibble()
+
+#calculating icc 
+#ICC of 58.4% indicates that slightly over half of the variability in air temp occurs between seasons. 
+#Probably a good idea to center the atemp variable within season and reintroduce the date atemp means to distinguish these sources of variability
+#atemp_mod[1,5]/sum(atemp_mod$sdcor)
+
+#Centering predictors
+bike_rentals <- bike_rentals %>% group_by(season) %>% 
+         #Creating season-centered version of atemp
+  mutate(atemp_season_c = atemp - mean(atemp, na.rm = TRUE),
+         #Reintroducing season means
+         atemp_season_mean = mean(atemp, na.rm = TRUE)) %>% 
+         ungroup() %>% 
+         #Grand-mean centering season means to help with interpretation
+  mutate(atemp_season_mean_gmc = atemp_season_mean - mean(atemp, na.rm = TRUE)) %>% 
+  #Dropping original season atemp mean
+  dplyr::select(-atemp_season_mean)
+
+#Displaying head of the dataframe
+bike_rentals %>% dplyr::select(-datetime,-temp,-time) %>% 
+head(n = 10) %>% kable(digits = 3, caption = "Bike Rentals Dataframe Sample\n(Some Variables Omitted)")
+```
+
+\newpage
+
+```{r, echo = FALSE}
+bike_rentals %>% dplyr::select(-datetime,-time,-date) %>% psych::describe() %>% dplyr::select(-vars,-trimmed,-mad) %>% kable(digits = 3, caption = "Variable descriptive statistics")
+```
+
+
+```{r, echo = FALSE, fig.cap = "Bivariate plots of continuous variables"}
+bike_rentals %>% 
+  dplyr::select(-atemp_season_c,-atemp_season_mean_gmc,-time,-date,-datetime,-season,-weather,-temp) %>% ggpairs() + theme_classic()
+```
+## Statistcal Approach
+|   To account for the statistical dependencies within each season and the repeated measures within a given date, a series of hierarchical linear models were utilized with random intercepts for both season and date within season. In these 3-level models, the level-1 unit of analysis was each hour, while the level-2 unit of analysis was the specific date and level-3 was the season. Level 1 error terms were assumed to be normally distributed while Level-2 and 3 resiuals (random effects) were each assumed to be multivariate normal distributed with a mean of 0. 
+|   Initially, a separate-intercepts model was fit to estimate the number of bikes rented delivered for weather type. Covariates of **atemp_season_c**, **atemp_season_mean_gmc**, **windspeed**, their product term, and squared verions of each variable were entered into the model in a forward-stepwise fashion, starting with the lower-order fixed effects. Variables were retained in the model if a likelihood-ratio test revealed the model with the fixed effect(s) of interest provided a significantly better fit to the data than a model without. Given our sample size of over 10000 level-1 observations, LRT ratio tests are perhaps overly sensitive to minute improvements in the model. As an additional requirement for model-entry, fixed-effects retained in the model selection process also were required to decrease the bayesian information criterion by at least 10 points. Once the fixed effects were determined, random slopes were added for **atemp_season_c** and **windspeed** and an autoregressive order 1 process was used to model the level-1 covariance structure. This covariance structure is common in time-series data where error terms are typically not independent. P-values for fixed effects in the final model were obtained using the normal approximation (i.e. z = Estimate/Std Error). More detail on this model fitting procedure can be found in the Appendix. Once the final model was obtained, specific hypotheses were tested using custom contrast codes and the model fixed effects. Specifically, comparisons of the mean number of bikes rented and the effect of feels-like temperature on bikes rented were made between each weather type. P-values were adjusted using the holm procedure to correct for the six total comparisons. All statistical analyses were performed using R version 4.4 in the R Studio Environment. Mixed-effects models were fit using lme from the nlme package, respectively. Custom contrasts were applied using the glht function from the multcomp package. The significance level for all analyses was set to 0.05.
+
+
+# Results and Discussion
+
+|   Our final model included fixed effects of **weather**, **atemp_season_c**, the **weather** by **atemp_season_c** interaction and **windspeed**. Random intercepts and slopes for **atemp_season_c** and **windspeed** were modeled for each season and date within season grouping variable. Additionally, an auto-regressive order 1 matrix was used to model level-1 correlation structure to account for auto-correlations within each date.
+|   The fixed effects of this model are presented in Table 3. The separate intercepts for each weather condition are the expected number of bike rentals for the corresponding weather condition when all other predictors are 0. For example, the intercept for Clear weather indicates that an average of 314 bicycles are rented on a clear day with no wind (**windspeed** = 0) and with season-average temperature (**atemp_season_c** = 0). The separate **atemp_season_c** slopes represent the average change in the number of bikes rented for every unit increase in temperature. For instance, the coefficient Clear Within-Season Temp indicates that bike rentals increase, on average, 7.6 units for every degree of temperature increase under clear weather conditions. While all of these coefficients are significantly different from 0, custom contrasts can be used to test more specific hypotheses.
+
+```{r, echo = FALSE}
+#Specifying a control statement to help with fitting
+cl <- lmeControl(maxIter = 1000, msMaxIter = 1000, niterEM = 1000,
+                 msMaxEval = 1000, opt = c("optim"), optimMethod = "BFGS")
+
+mod12 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, random = ~ 1 + atemp_season_c + windspeed|season/date, correlation = corAR1(form = ~1|season/date), data = bike_rentals, control = cl, method = "REML")
+
+
+#Printing fixed effects estimate
+tab_mod <- tab_model(mod12,
+          pred.labels = 
+          c(weatherClear = "Clear", 
+            `weatherMisty/Cloudy` = "Misty/Cloudy",
+            `weatherLight Snow/Rain` = "Light Snow/Rain",
+            `weatherClear:atemp_season_c` = "Clear Within-Season Temp",
+            `weatherMisty/Cloudy:atemp_season_c` = "Misty/Cloudy Within-Season Temp", `weatherLight Snow/Rain:atemp_season_c` = "Light Snow/Rain Within-Season Temp", "Windspeed"), title = "Fixed Effects Estimates for Final Model",
+          dv.labels = "Bike Counts",
+          order.terms = c(1,2,3,5,6,7,4),
+          show.re.var = FALSE,
+          show.ngroups = FALSE)
+
+sjtable2df::mtab2df(tab_mod, n_models = 1, output = "kable")
+```
+
+
+
+```{r, echo = FALSE}
+#Tabulating random effects SDs and correlations
+#SDs
+mod12 %>% 
+  VarCorr() %>% 
+  as_tibble() %>% 
+  dplyr::filter(is.na(var2)) %>% 
+  dplyr::select(-var2) %>% 
+  set_names(c("Group","Random-Effect","sd")) %>% 
+  mutate(`Random-Effect` = case_when(
+    `Random-Effect` == "(Intercept)" ~ "Intercept",
+    `Random-Effect` == "atemp_season_c" ~ "within-season temp",
+    `Random-Effect` == "windspeed" ~ "Windspeed",
+    TRUE ~ ""
+  ),
+  Group = ifelse(duplicated(Group),"",Group)) %>% 
+  kable(digits = 6, caption = "Random-Effect Standard Deviations")
+
+#Correlations
+mod12 %>% 
+  VarCorr() %>% 
+  as_tibble() %>% 
+  dplyr::filter(!is.na(var2)) %>% 
+  mutate_at(vars(var1,var2), ~case_when(
+    .x == "(Intercept)" ~ "Intercept",
+    .x == "atemp_season_c" ~ "witin-season temp",
+    TRUE ~ as.character(.x)
+  )) %>% 
+  mutate(grp = ifelse(duplicated(grp), "", grp)) %>% 
+  set_names(c("Group", "Random-Effect 1", "Random-Effect 2", "Correlation")) %>% 
+  kable(digits = 6, caption = "Random-Effect Correlations")
+
+```
+
+|   Random effect standard deviations reveal the vast majority of the variability in bicycle counts occurs at Level-1 (hour-to-hour), but there is also appreciable variance between seasons. Comparably, the random-slope variance for **atemp_season_c** and **windspeed** exhibit very little variance either within season or date within season. 
+
+```{r, echo = FALSE, fig.cap = "Effect of temperature by weather condition on bike rental counts", message = FALSE, warning = FALSE}
+#Generating prediction data for temperature versus bike counts plot
+#We'll generate a plot displaying the weather:temperature interaction
+#In generating this plot, we'll use a range of predicted values from +/- 2SD
+#The sd of the outcome in the raw data is contaminated by systematic variability,
+#To get a better estimate of we'll extract the level-1 residual sd from an 
+#unconditional model with temperature as the outcome 
+
+
+temp_sd <- lmer(atemp ~ 1 + (1|season/date), data = bike_rentals) %>% sigma()
+
+#Our plot should also reflect the fact that we have different means for the different kinds of weather
+
+temp_means <- bike_rentals %>% group_by(weather) %>% dplyr::summarize(temp = mean(temp, na.rm = TRUE)) %>% pull(temp) %>% set_names(c(unique(bike_rentals$weather)))
+  
+
+#We can use these values to generate data from which to generate model predictions and confidence intervals
+clear_data <- 
+  data.frame(weather = "Clear", mean_temp = temp_means["Clear"], temp = seq(temp_means["Clear"] - 
+                                                    2*temp_sd, temp_means["Clear"] + 2*temp_sd))
+
+misty_data <- 
+  data.frame(weather = "Misty/Cloudy", mean_temp = temp_means["Misty/Cloudy"], temp = seq(temp_means["Misty/Cloudy"] - 
+                                                    2*temp_sd, temp_means["Misty/Cloudy"] + 2*temp_sd)) 
+
+light_rain_data <- 
+  data.frame(weather = "Light Snow/Rain", mean_temp = temp_means["Light Snow/Rain"],
+             temp = seq(temp_means["Light Snow/Rain"] - 
+                                                    2*temp_sd, temp_means["Light Snow/Rain"] + 2*temp_sd)) 
+
+prediction_data <- bind_rows(clear_data, misty_data, light_rain_data) %>% 
+  #Our plot will just visualize the fixed effects for now, so these can be arbitrary levels of the random grouping variables. We'll set windspeed equal to the grand-mean
+  mutate(season = "Summer", date = "2011-01-01", windspeed = mean(bike_rentals$windspeed, na.rm = TRUE),
+         #is 0 for all weather types because we are at their mean
+         atemp_season_c = temp - mean_temp) 
+
+#Obtain predictions
+predictions <- predict(mod12, newdata = prediction_data, level = 0)
+
+
+prediction_data %>% mutate(pred = predictions) %>% 
+  ggplot(aes(x = temp, y = pred, color = weather)) + 
+  geom_line(linetype = 1) + 
+  facet_wrap(~weather) + 
+  theme_classic() + 
+  labs(x = "Feels Like Air Temperature (°C)",
+       y = "Predicted Hundreds\n of Bike Rides per Hour") + 
+  guides(color = guide_legend("Weather"))
+
+```
+
+
+```{r, echo = FALSE, fig.cap = "Effect of Windspeed on Bike Rentals", message = FALSE, warning = FALSE}
+#Visualizing the windspeed relationship using a similar framework, but our fixed effects plot doesn't need to illustrate any interaction effect, making things easier.
+
+#Obtaining sd estimate for windspeed to plot over
+wind_sd <- lmer(windspeed ~ 1 + (1|season/date), data = bike_rentals) %>% sigma()
+
+wind_mean <- mean(bike_rentals$windspeed, na.rm = TRUE)
+
+#Generating prediction data
+prediction_data_wind <- 
+  bike_rentals %>% 
+  data_grid(windspeed = seq(wind_mean - 2*wind_sd, wind_mean + 2*wind_sd),
+            #Fixed windspeed effect doesn't change across season or weather, so 
+            #we can use arbitrary values here
+            atemp_season_c = 0, season = "Summer", weather = "Clear", .model = mod12) 
+
+#Generating Predictions
+predictions_wind <- predict(mod12, newdata = prediction_data_wind, level = 0)
+
+#Plotting fixed effects
+prediction_data_wind %>% mutate(pred = predictions_wind) %>% 
+  ggplot(aes(x = windspeed, y = pred)) + 
+  geom_line(linewidth = 1, color = "dodgerblue") +
+  scale_y_continuous(limits = c(150,180), breaks = seq(150,180,5)) +
+  labs(x = "Windspeed (km/h)",
+       y = "Predicted Hundreds\n of Bike Rides per Hour") + 
+  theme_classic()
+```
+
+|   To assess differences in the number of bike counts across weather types, linear contrasts were applied to the fixed effects of our final model. The average number of bikes were compared at an average seasonal temperature (i.e. **atemp_season_c** = 0). These findings indicate that there were only significant differences in mean bike counts between clear and light rain/snow conditions  as well as between between cloudy/misty conditions and light rain/snow conditions. There was no significant difference between clear and cloudy/misty conditions. In addition to the mean bike counts for each type of weather, model comparisons revealed a significant improved fit to the data when a **weather** by **atemp_season_c** interaction was included as a fixed effect. With this in mind, comparisons of the **atemp_season_c** effect were made between the different weather types as well. Despite the model improvement with the interaction effect, none of the **atemp_season_c** were different between the weather types. It is important to bare in mind that likelihood ratio tests are going to be very sensitive to very incremental improvements in model fit and that although the BIC difference for models that modeled and did not model the interaction effect was still modest at 25.
+
+## Statistiscal test of differences in bike counts by weather type 
+
+
+```{r, echo = TRUE}
+#We can first set up our matrix of weights for testing our hypotheses.
+#These will be applied to the fixed effects of our model. 
+#We'll test our comparisons when the continuous
+#covariates = 0, i.e no wind and a day of average temperature for the given season.
+#We'll test for differences in mean temperature (differences among intercepts)
+#and differences between effects for within-season temperature 
+#(differences among slopes)
+bike_matrix <- matrix(
+          #Clear - Misty/Cloudy
+  data = c(1,-1,0,0,0,0,0,
+          #Clear - Light Snow/Rain
+           1,0,-1,0,0,0,0,
+          #Misty/Cloudy - Light Snow/Rain
+           0,1,-1,0,0,0,0,
+          #Clear - Misty/Cloudy Temp Slope
+           0,0,0,0,1,-1,0,
+          #Clear - Light Snow/Rain Slope
+           0,0,0,0,1,0,-1,
+          #Misty/Cloudy - Light Snow/Rain Slope
+           0,0,0,0,0,1,-1),
+  byrow = TRUE, nrow = 6,
+  dimnames = list(c("Clear - Misty/Cloudy",
+                    "Clear - Light Snow/Rain",
+                    "Misty/Cloudy - Light Snow/Rain",
+                    "Clear - Misty/Cloudy Temp Slope",
+                    "Clear - Light Snow/Rain Temp Slope",
+                    "Misty/Cloudy - Light Snow/Rain Temp Slope")))
+
+
+summary(glht(mod12, linfct = bike_matrix, rhs = 0, alternative = "two.sided"), 
+        adjusted("holm"))
+
+```
+
+
+|   Given the nature of our bike counts outcome (count data), I had initially considered using a Poisson distribution in a generalized hierarchical linear model. I failed to find a fitting function that was capable of performing regression using a Poisson family with an autocorrelation pattern at Level-1. The problems with level-1 normality and homoscedasticity possibly stem from this mis-specified error distribution. To make more defensible inferences, these methods were paired with non-parametric bootstrapping to build up empirical sampling distributions of the contrasts of interest. Details on this procedure can be found in the Appendix, but inferences established using our final model were corroborated by bootstrapping. 
+
+# Conclusion
+|   In summary, these findings fail to indicate that temperature has a differential effect on bike rental depending on the weather type. It it is also important to note, however, that while the effect of temperature did not change with the weather conditions, overall bike rental numbers were lower, on average, in Light Snow/Rain conditions compared to clear conditions and compared to misty/cloudy conditions. Future work in this area should include person-level/ride-level predictors to provide more actionable marketing strategies for bike rental companies. For instance, data regarding the sex, age, previous biking experience, length of ride, reason for rental (i.e. pleasure or commuting to work) could act to predict bike rental rates more accurately. This information could likely be collected using a mobile application interface and would help companies adjust size and location of bike rental stations.
+
+
+# References
+::: {#refs}
+:::
+
+
+# Appendix 
+
+## Data Preparation
+
+```{r, echo = TRUE, eval = FALSE}
+#Loading in data frame
+ bike_rentals <- read.csv("bike_rentals.csv") %>% 
+#Modifying variables to proper data-types
+  mutate(datetime = as.POSIXct(datetime), 
+         date = as.Date(trunc(datetime, 'days')),
+         time = format(datetime, format = "%H:%M"),
+         season = factor(season, labels = c("Winter","Spring","Summer","Fall")),
+         weather = factor(weather, 
+labels = c("Clear", "Misty/Cloudy","Light Snow/Rain","Heavy Snow/Rain"))) %>% 
+  #Dropping columns that aren't of interest for this project
+  dplyr::select(-holiday, -workingday, -humidity,-casual,-registered)
+
+#We only have one hour that had Heavy Snow/Rain out of the 10886 hours of data. 
+#I'm electing to drop this case from the analysis so we can 
+#estimate temperature effects for each weather type
+bike_rentals <- bike_rentals %>% filter(weather != "Heavy Snow/Rain") %>% 
+  mutate(weather = factor(weather, labels = c("Clear", "Misty/Cloudy","Light Snow/Rain"))) %>% 
+  mutate(weather = droplevels(weather, exclude = "Heavy Snow/Rain"))
+
+#Because atemp is an hour-level variable (level-1), it is likely it also contains 
+#season-level variability (i.e. same seasons are hotter/colder on average). 
+#Running an unconditional model with temperature as the predictor helps 
+#establish how the variance is partitioned and might highlight a need to 
+#separate variances sources when modeling our outcome
+atemp_mod <- lmer(atemp ~ 1 + (1|season), data = bike_rentals) %>% VarCorr() %>% as_tibble()
+
+#calculating icc 
+#ICC of 58.4% indicates that slightly over half of the variability in air temp occurs between seasons. 
+#Probably a good idea to center the atemp variable within season and reintroduce the date atemp means to distinguish these sources of variability
+atemp_mod[1,5]/sum(atemp_mod$sdcor)
+
+#Centering predictors
+bike_rentals <- bike_rentals %>% group_by(season) %>% 
+         #Creating season-centered version of atemp
+  mutate(atemp_season_c = atemp - mean(atemp, na.rm = TRUE),
+         #Reintroducing season means
+         atemp_season_mean = mean(atemp, na.rm = TRUE)) %>% 
+         ungroup() %>% 
+         #Grand-mean centering season means to help with interpretation
+  mutate(atemp_season_mean_gmc = atemp_season_mean - mean(atemp, na.rm = TRUE)) %>% 
+  #Dropping original season atemp mean
+  dplyr::select(-atemp_season_mean)
+
+#Displaying head of the dataframe
+head(bike_rentals, n = 20)
+```
+
+## Fixed Effect Specification
+
+```{r, echo = TRUE}
+#Unconditional model
+#Keeping random effects and level-1 correlation structure simple as we build up fixed effects
+#Random effects suggest that approximately
+#~17 percent of variability in bike counts occurs at the level of the season
+#~19 percent of variability in bike counts occurs at the level of day within season
+#~64 percent of variability in bike counts occurs at level-1 (i.e. hour to hour variation)
+mod0a <- lme(fixed = count ~ 1, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+#mod0b ignores the level of season
+mod0b <- lme(fixed = count ~ 1, random = ~ 1|date, data = bike_rentals, method = "ML")
+
+#Model comparison reveals that the level of season shouldn't be ignored (Likelihood ratio test (LRT), p < 0.0001), BIC diff = 175
+anova(mod0a,mod0b)
+
+
+#Adding weather as a fixed effect
+# 0 + weather notation creates separate intercepts for each weather type 
+mod1 <- lme(fixed = count ~ 0 + weather, random = ~ 1|date, 
+            data = bike_rentals, method = "ML")
+
+#Comparing models to test for weather effect
+#Test for weather effect is significant 
+#p<0.0001, BIC diff = 56
+anova(mod0b,mod1)
+
+#Adding effect of within-season temperature
+mod2 <- lme(fixed = count ~ 0 + weather + atemp_season_c, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+#Comparing models to test for temperature effect
+#Test for within-season temperature effect is significant 
+#p<0.0001, BIC diff = 2343
+anova(mod1,mod2)
+
+#Adding effect of mean season temperature to reintroduce between-season differences
+mod3 <- lme(fixed = count ~ 0 + weather + atemp_season_c + atemp_season_mean_gmc, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+
+#Comparing models to test for effect of season mean 
+#Test for season mean is statistically significant (p=0.01), but 
+#The BIC actually increased slightly
+anova(mod2,mod3)
+
+#We can compare models with the within- and between-effects entered alone
+mod4 <- lme(fixed = count ~ 0 + weather + atemp_season_mean_gmc, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+#Comparing models with either the within-season OR between-season temperature effect
+#Because number of parameters are the same between the models, we don't get a likelihood ratio test, but the BIC favors the model with the within-season effect by over 2000 points. We will proceed with model comparisons using this model for sake of parsimony
+anova(mod2,mod4)
+
+#Testing for within-season temperature:weather effect
+mod5 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+#Comparing models to test for within-season temperature:weather effect
+#Test for effect is statistically significant (p < 0.0001) and BIC decreased by 25
+anova(mod2,mod5)
+
+
+#Testing for effect of windspeed
+mod6 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+#Comparing models to test for windspeed effect
+#Test for windspeed effect is statistically significant (p < 0.0001) and BIC decreased by 279
+anova(mod5,mod6)
+
+#Testing for windspeed:weather effect
+mod7  <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + weather:windspeed, random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+
+#Comparing models to test for windspeed:weather interaction
+#Test for interaction effect is statistically significant (p <0.0001),
+#but BICs are practically indistinguishable (BIC diff = 6)
+#windspeed:weather interaction will not be carried through for further model comparisons
+anova(mod6,mod7)
+
+#Testing for quadratic within-season temperature effect
+mod8 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed +  I(atemp_season_c^2), random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+
+#Comparing models to test for quadratic effect of temperature
+#Test for quadratic temperature effect is statistically significant (p = 0.021),
+#but BICs are indistinuishable in the model with the quadratic effect. 
+#quadratic effect of within-season temperature will not be carried through into final model
+anova(mod6,mod8)
+
+
+#Testing for quadratic windspeed effect
+mod9 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed +  I(windspeed^2), random = ~ 1|season/date, data = bike_rentals, method = "ML")
+
+
+#Comparing models to test for quadratic effect of windspeed
+#Test for quadratic windspeed effect is statistically significant (p = 0.0019),
+#but BICs are nearly indistinguishable.
+#quadratic effect of windspeed will not be carried through into final model
+anova(mod6,mod9)
+
+
+#Our final fixed effects will be composed of separate intercepts for each weather type, separate linear effects of within-season temperature and an overall linear effect of windspeed
+#mod6
+
+```
+
+## Modifying random effects structure
+
+|   With our fixed effects in order, we will now introduce random slopes based on our study design. Presently, the random intercepts for season and date within season account for the nested structure of our data, but we can allow our effects of windspeed and within-season temperature to vary by season as well. Now that we are comparing models that differ only in their random effects, we can obtain unbiased variance estimates fitting with restricted maximum likelihood as opposed to full information maximum likelihood
+
+```{r, echo = TRUE}
+#Specifying a control statement to help with fitting
+cl <- lmeControl(maxIter = 1000, msMaxIter = 1000, niterEM = 1000,
+                 msMaxEval = 1000, opt = c("optim"), optimMethod = "BFGS")
+
+#Fitting random intercept model with REML
+mod6_REML <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, 
+             random = ~ 1 |season/date, data = bike_rentals, method = "REML", 
+             control = cl)
+
+mod10 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, 
+             random = ~ 1 + atemp_season_c + windspeed|season/date, data = bike_rentals, method = "REML", 
+             control = cl)
+
+#Model comparison to test for improved fit using random slopes
+#Joint test for atemp_season_c and windspeed random slopes was statistically significant (p < 0.0001)
+#Random slopes also substantially dropped BIC ~ 300
+anova(mod6_REML, mod10)
+
+```
+
+|   A(n) default/assumption of mixed effects models is that the level-1 variances are equal across level-2 units. We can relax this assumption using weights argument of the nlme package and see if allowing level-1 variances to differ across seasons improves model fit.
+
+```{r, echo = TRUE}
+
+#A model fit with random slopes for one or both of atemp_season_c or windspeed AND separate variances for seasons kept butting up against singularity warnings.
+# mod11_warning <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, random = ~ 1 + atemp_season_c + windspeed|season/date, weights = varIdent(form = ~1|season), data = bike_rentals, method = "REML", control = cl)
+
+#Therefore, we will compare model a random-intercepts model that estimates separate variances for each season against a random slopes model that estimates a single level-1 variance.
+mod11 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, 
+             random = ~ 1|season/date, weights = varIdent(form = ~1|season), data = bike_rentals, method = "REML", 
+             control = cl)
+
+#Having to choose between random-slopes or separate level-1 variances, it appears the random-slopes model provides a significantly improved fit (p < 0.0001) and a lower BIC (165)
+#We'll proceed with the random slopes model in our analyses
+anova(mod10,mod11)
+```
+
+|   Another common default in mixed-effects models is that the level-1 residuals are uncorrelated within each higher-level unit. This is often a poor assumption in time-series data as lead/lag correlations are often present. We can manipulate the correlation argument in the lme function to specify an auto-regressive order 1 pattern instead of the default diagonal correlation matrix. Model comparison will tell us if this model provides an improved fit to the data.
+
+```{r, echo = TRUE}
+#Specifying a control statement to help with fitting
+cl <- lmeControl(maxIter = 1000, msMaxIter = 1000, niterEM = 1000,
+                 msMaxEval = 1000, opt = c("optim"), optimMethod = "BFGS")
+
+mod12 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, random = ~ 1 + atemp_season_c + windspeed|season/date, correlation = corAR1(form = ~1|season/date), data = bike_rentals, control = cl, method = "REML")
+
+#Comparing models to test for auto-correlation in residuals
+#Modeling level-1 residuals as an AR1 process significantly improves model
+#fit (p < 0.0001) and drops BIC substantially (BIC diff = 8650)
+anova(mod10,mod12)
+
+#Just for fun, let's see if a totally unstructured correlation matrix captures the data any better.
+#Will not converge
+# model13 <- lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, random = ~ 1 + atemp_season_c + windspeed|season/date, correlation = corSymm(form = ~1|season/date), data = bike_rentals, control = cl, method = "REML")
+
+#Our final model will be one with random effects for atemp_season_c and windspeed for season and date within season and an AR1 covariance structure at level 1
+```
+
+## Model Prediction Plots
+
+```{r, echo = TRUE, eval = FALSE}
+#Generating prediction data for temperature versus bike counts plot
+#We'll generate a plot displaying the weather:temperature interaction
+#In generating this plot, we'll use a range of predicted values from +/- 2SD
+#The sd of the outcome in the raw data is contaminated by systematic variability,
+#To get a better estimate of we'll extract the level-1 residual sd from an 
+#unconditional model with temperature as the outcome 
+
+
+temp_sd <- lmer(atemp ~ 1 + (1|season/date), data = bike_rentals) %>% sigma()
+
+#Our plot should also reflect the fact that we have different means for the 
+#different kinds of weather
+
+temp_means <- bike_rentals %>% group_by(weather) %>% dplyr::summarize(temp = mean(temp, na.rm = TRUE)) %>% pull(temp) %>% set_names(c(unique(bike_rentals$weather)))
+  
+
+#We can use these values to generate data from which to generate 
+#model predictions and confidence intervals
+clear_data <- 
+  data.frame(weather = "Clear", 
+             mean_temp = temp_means["Clear"], temp = seq(temp_means["Clear"] - 
+                                2*temp_sd, temp_means["Clear"] + 2*temp_sd))
+
+misty_data <- 
+  data.frame(weather = "Misty/Cloudy", 
+            mean_temp = temp_means["Misty/Cloudy"], temp = seq(temp_means["Misty/Cloudy"] - 
+                                    2*temp_sd, temp_means["Misty/Cloudy"] + 2*temp_sd)) 
+
+light_rain_data <- 
+  data.frame(weather = "Light Snow/Rain", 
+             mean_temp = temp_means["Light Snow/Rain"],temp = seq(temp_means["Light Snow/Rain"] - 
+                                        2*temp_sd, temp_means["Light Snow/Rain"] + 2*temp_sd)) 
+
+prediction_data <- bind_rows(clear_data, misty_data, light_rain_data) %>% 
+#Our plot will just visualize the fixed effects for now, so these can be arbitrary 
+#levels of the random grouping variables. We'll set windspeed equal to the grand-mean
+  mutate(season = "Summer", date = "2011-01-01", 
+         windspeed = mean(bike_rentals$windspeed, na.rm = TRUE),
+         #is 0 for all weather types because we are at their mean
+         atemp_season_c = temp - mean_temp) 
+
+#Obtain predictions
+predictions <- predict(mod12, newdata = prediction_data, level = 0)
+
+
+prediction_data %>% mutate(pred = predictions) %>% 
+  ggplot(aes(x = temp, y = pred, color = weather)) + 
+  geom_line(linetype = 1) + 
+  facet_wrap(~weather) + 
+  theme_classic() + 
+  labs(x = "Feels Like Air Temperature (°C)",
+       y = "Predicted Hundreds\n of Bike Rides per Hour") + 
+  guides(color = guide_legend("Weather"))
+
+```
+
+```{r, echo = TRUE, eval = FALSE, fig.cap = "Effect of Windspeed on Bike Rentals"}
+#Visualizing the windspeed relationship using a similar framework, 
+#but our fixed effects plot doesn't need to illustrate any interaction effect,
+#making things easier.
+
+#Obtaining sd estimate for windspeed to plot over
+wind_sd <- lmer(windspeed ~ 1 + (1|season/date), data = bike_rentals) %>% sigma()
+
+wind_mean <- mean(bike_rentals$windspeed, na.rm = TRUE)
+
+#Generating prediction data
+prediction_data_wind <- 
+  bike_rentals %>% 
+  data_grid(windspeed = seq(wind_mean - 2*wind_sd, wind_mean + 2*wind_sd),
+            #Fixed windspeed effect doesn't change across season or weather, so 
+            #we can use arbitrary values here
+            atemp_season_c = 0, season = "Summer", weather = "Clear", .model = mod12) 
+
+#Generating Predictions
+predictions_wind <- predict(mod12, newdata = prediction_data_wind, level = 0)
+
+#Plotting fixed effects
+prediction_data_wind %>% mutate(pred = predictions_wind) %>% 
+  ggplot(aes(x = windspeed, y = pred)) + 
+  geom_line(linewidth = 1, color = "dodgerblue") +
+  scale_y_continuous(limits = c(150,180), breaks = seq(150,180,5)) +
+  labs(x = "Windspeed (km/h)",
+       y = "Predicted Hundreds\n of Bike Rides per Hour") + 
+  theme_classic()
+```
+
+## Linear Contrast Testing of Model Fixed Effects
+
+```{r, echo = TRUE, eval = FALSE}
+#We can first set up our matrix of weights for testing our hypotheses.
+#These will be applied to the fixed effects of our model. We'll test our comparisons when the continuous
+#covariates = 0, i.e no wind and a day of average temperature for the given season.
+#We'll test for differences in mean temperature (differences among intercepts)
+#and differences between effects for within-season tempemrature (differences among slopes)
+
+bike_matrix <- matrix(
+          #Clear - Misty/Cloudy
+  data = c(1,-1,0,0,0,0,0,
+          #Clear - Light Snow/Rain
+           1,0,-1,0,0,0,0,
+          #Misty/Cloudy - Light Snow/Rain
+           0,1,-1,0,0,0,0,
+          #Clear - Misty/Cloudy Temp Slope
+           0,0,0,0,1,-1,0,
+          #Clear - Light Snow/Rain Slope
+           0,0,0,0,1,0,-1,
+          #Misty/Cloudy - Light Snow/Rain Slope
+           0,0,0,0,0,1,-1),
+  byrow = TRUE, nrow = 6,
+  dimnames = list(c("Clear - Misty/Cloudy",
+                    "Clear - Light Snow/Rain",
+                    "Misty/Cloudy - Light Snow/Rain",
+                    "Clear - Misty/Cloudy Temp Slope",
+                    "Clear - Light Snow/Rain Temp Slope",
+                    "Misty/Cloudy - Light Snow/Rain Temp Slope")))
+
+
+summary(glht(mod12, linfct = bike_matrix, rhs = 0, alternative = "two.sided"), adjusted("holm"))
+```
+
+## Assessing the Adequacy of Final Model
+
+```{r, echo = TRUE}
+#Checking normality of level-1 residuals
+as.data.frame(resid(mod12)) %>% set_names("resid") %>% 
+  ggplot(aes(sample = resid)) + 
+  stat_qq_band() + 
+  stat_qq_line() +
+  stat_qq_point() + 
+  theme_classic() + 
+  ggtitle("Level-1 Residuals\n Normality Q-Q Plot")
+            
+
+#Checking homoscedasticity of level-1 residuals
+data.frame(fitted(mod12), resid(mod12)) %>% set_names(c("fitted","resid")) %>% 
+  ggplot(aes(x = fitted, y = resid)) + 
+  geom_point() + 
+  geom_smooth() +
+  theme_classic()
+
+#Checking Normality of Level-2 Random effects (date )
+#Checking multivariate normality of level 2 residuals
+L2_residuals <- as.matrix(ranef(mod12)[["date"]])
+colnames(L2_residuals) <- c("Intercept", "atemp_season_c", "windspeed")
+MD <- mahalanobis(L2_residuals, center = colMeans(L2_residuals), cov = cov(L2_residuals), tol = 1e-20)
+L2_resid_df <- data.frame(date = unique(bike_rentals$date), MD = MD)
+
+#Plotting Mahalanobis Distance 
+#No serious deviations from multivariate normality
+ggplot(L2_resid_df, aes(sample = MD)) + 
+  stat_qq_band(distribution = "chisq", dparams = list(df = 3)) + 
+  stat_qq_line(distribution = "chisq", dparams = list(df = 3)) + 
+  stat_qq_point(distribution = "chisq", dparams = list(df = 3)) + 
+  labs(title = "Mahalanobis Distance\nfor Level 2 Residuals",
+       x = expression(paste("Theoretical Quantiles (", chi^2,", df = 3)")),
+       y = "Sample Quantiles") +
+  theme_classic()
+
+#Checking multivariate normality of level 3 residuals
+L3_residuals <- as.matrix(ranef(mod12)[["season"]])
+colnames(L3_residuals) <- c("Intercept", "atemp_season_c", "windspeed")
+MD <- mahalanobis(L3_residuals, center = colMeans(L3_residuals), cov = cov(L3_residuals), tol = 1e-100)
+L3_resid_df <- data.frame(date = unique(bike_rentals$season), MD = MD)
+
+#Plotting Mahalanobis Distance 
+#No serious deviations from multivariate normality
+ggplot(L3_resid_df, aes(sample = MD)) + 
+  stat_qq_band(distribution = "chisq", dparams = list(df = 3)) + 
+  stat_qq_line(distribution = "chisq", dparams = list(df = 3)) + 
+  stat_qq_point(distribution = "chisq", dparams = list(df = 3)) + 
+  labs(title = "Mahalanobis Distance\nfor Level 3 Residuals",
+       x = expression(paste("Theoretical Quantiles (", chi^2,", df = 3)")),
+       y = "Sample Quantiles") +
+  theme_classic()
+
+```
+
+## Bootstrapping 
+
+Given our issues with normality and heteroskedasticity at level 1, we can use bootstrapping to ensure that our inferences are valid. To do this we will build up empirical distributions of the glht contrasts by resampling date with replacement from our original dataset and running our final model on this bootstrapped data. 8000 iterations were used as opposed to the usual 10,000 to 20,000 due to issues with compuation time.
+
+```{r, echo = TRUE, eval = FALSE}
+
+###Bootstrapping code for lmer model
+#Obtain number of level 2 units (subject IDs)
+date_count <- length(unique(bike_rentals$date))
+
+
+#########Resampling functions
+
+#Resampling function for level 2 (subjectIDs)
+#Takes data, number of level_2_units, and grouping variable (...)
+level_2_resample <- function(data, level_2_units = date_count, ...) {
+  dots <- quos(...)
+  
+  group_ids <- data %>% 
+    group_by(!!!dots) %>% 
+    group_indices()
+  
+  sampled_groups <- sample(unique(group_ids), size = level_2_units, replace=TRUE)
+  
+  resampled_data <- map_df(sampled_groups, function(x) data %>% filter(group_ids == x))
+  
+  return(resampled_data)
+}
+
+
+#level_2_resample(bike_rentals,level_2_units = date_count, date)
+
+#function that performs bootstrapping on glht call
+resample_model_fixef <- function(data, resample_function,...){
+  
+  #Resamples dates in the data frame with replacememtn
+  resamp_data <- data %>% 
+    resample_function(...) 
+
+#Runs bootstrapped model
+boot_mod <- 
+  lme(fixed = count ~ 0 + weather + weather:atemp_season_c + windspeed, 
+      random = ~ 1 + atemp_season_c + windspeed|season/date, 
+      correlation = corAR1(form = ~1|season/date), 
+      data = resamp_data, 
+      control = cl, 
+      method = "REML")
+    
+
+#Performing glht on bootstrapped model
+boot_glht <- 
+  confint(glht(boot_mod, linfct = bike_matrix, rhs = 0, alternative = "two.sided"))["confint"]$confint %>% as.data.frame() %>% dplyr::select(Estimate) %>% 
+  t() %>% as.data.frame()
+    
+
+return(boot_glht)
+}
+
+#Sets up cores for parallel processing
+cores <- availableCores()
+plan(multisession, workers =  cores - 1)
+options(future.rng.onMisuse = "ignore", seed = NULL)
+
+#Runs and times result. The number of iterations should be higher, but given the complexity of our model, it would still take quite some time to run even with parallel processing
+tic()
+boot_results <- 
+  future_map(1:5000, 
+            safely(quietly(~resample_model_fixef(bike_rentals, level_2_resample, level_2_units = date_count, date))))
+toc()
+
+#Only keeping boot results that ran without warnings or singularities
+filtered_boot_results <- keep(boot_results, ~is.null(.x$error) & !any(str_detect(.x$result[["messages"]],"boundary"))) %>% 
+      flatten() %>% map("result")
+
+filtered_boot_results_df <- filtered_boot_results[names(filtered_boot_results) == "result"] %>% 
+  bind_rows()
+
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+#Obtaining original estimates for glht contrasts
+bike_og_estimates <-   confint(glht(mod12, linfct = bike_matrix, rhs = 0, alternative = "two.sided"))["confint"]$confint %>% as.data.frame() %>% dplyr::select(Estimate) %>% 
+  t() %>% as.data.frame()
+
+
+#Loading in bootstrapping  results of glht contrasts
+bike_boot_results <- read.csv("bike_boot_results_8k.csv") %>% 
+  dplyr::select_if(is.numeric) %>% 
+  set_names(c(colnames(bike_og_estimates)))
+
+
+#Obtaining means and 95% Bias-corrected and accleretaed CIs
+
+boot_confint <- bike_boot_results %>% 
+  imap_dfr(function(contrast_, contrast_name_){
+  
+
+
+  bca(contrast_, conf.level = 0.95)[1]
+
+  data.frame(#Contrast name
+             Contrast = contrast_name_,
+             #Lower limit
+             boot_lower = bca(contrast_, conf.level = 0.95)[1],
+             #Mean
+             boot_mean = mean(contrast_, na.rm = TRUE),
+             #Upper Limit
+             boot_upper = bca(contrast_, conf.level = 0.95)[2],
+             #Original Estimate
+             og_estimate = bike_og_estimates %>% pull(contrast_name_))
+})
+
+boot_confint %>% kable(digits = 3, 
+caption = "Bootstrapped Contrasts Means and 95% Bias-corrected and 
+accelerated Confidence Intervals")
+
+#Plotting bootstrap distributions
+bike_boot_results %>% 
+  imap(function(contrast_,contrast_name_){
+    
+    contrast_ci <- boot_confint %>% filter(Contrast == contrast_name_)
+    
+    contrast_og_estimate <- contrast_ci %>% pull(og_estimate) %>% round(digits = 3)
+    
+    contrast_lower <- contrast_ci %>% pull(boot_lower) %>% round(digits = 3)
+    
+    contrast_upper <- contrast_ci %>% pull(boot_upper) %>% round(digits = 3)
+    
+    contrast_x_position <- (min(contrast_) + contrast_lower)/2
+    
+    ggplot(data = bike_boot_results, aes(x = !!sym(contrast_name_))) +
+      stat_slab() +
+      geom_vline(data = contrast_ci, aes(xintercept = boot_lower), 
+                        color = "red", linetype = "dashed") +
+      geom_vline(data = contrast_ci, aes(xintercept = boot_upper), 
+                        color = "red", linetype = "dashed") +
+      geom_vline(data = contrast_ci, aes(xintercept = og_estimate), 
+                        color = "blue", linetype = "dashed") +
+      annotate(geom = "text", label = paste("Original Estimate =\n", 
+                        contrast_og_estimate), 
+               x = contrast_x_position,  y = 0.5, color = "blue") +
+      annotate(geom = "text", label = paste("95% BCa CI =\n","(", 
+                        contrast_lower,"-",contrast_upper,")"), 
+               x = contrast_x_position , y = 0.8, color = "red") +
+      ylab(NULL)+
+      theme_classic()
+  })
+
+```
+
+Inferences made from the non-parametric bootstrapping methods agree with those from the original model. Contrasts are considered statistically significant if the 95% bootstrapped confidence interval does not contain the null value of 0.
