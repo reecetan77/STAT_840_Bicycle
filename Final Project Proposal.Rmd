@@ -1,0 +1,62 @@
+---
+title: "Final Project Proposal"
+author: "Tanner Reece"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggcorrplot)
+library(GGally)
+library(Hmisc)
+
+knitr::opts_knit$set(root.dir = "/Users/Tanner/Desktop/KU Stat Courses/STAT 840 (Linear Regression)/Final Project")
+
+```
+
+ The data set we will be using comes to us from the Yulu company by way of the data set sharing website Kaggle (https://www.kaggle.com/datasets/sreekargv/bike-rentals). Briefly, contained in this data set are 12 variables recorded by the Yulu bicycle transportation company in India. Yulu was interested in the variables that influenced bicycle rental business during a dip in business in 2011. The company recorded features hourly for each bike rental occurrence during nearly a 2 year period including, but not limited to, date-time, weather, and number of casual riders. Data were collected from the mobile app that users must link to the bike to use. Although speculative, it seems plausible that an individual's tendency to ride in a warm temperature weather might depend on rain, sleet, mist, etc. For this project, I hypothesize that there will be a significant interaction between weather and temperature. Specifically, I hypothesize that the relationship between total rider counts and temperature will increase as the weather changes from colder, rainier conditions to warmer, calmer conditions. 
+ The bike_rentals data set has 12 variables including 1 datetime, 4 unordered factor variables, 4 continuous variables, and 3 count variables.
+The data are loaded and some basic visualizations are provided below. For this regression analyses, we will test several models involving predictors of season, weather, temperature, wind speed in the prediction of number of rides (count). Results will be inspected carefully given that our outcome measure is count data and unlikely to be normally distributed.
+```{r}
+#Loading in data frame
+ bike_rentals <- read.csv("bike_rentals.csv") %>% 
+#Modifying variables to proper data-types
+  mutate(datetime = as.POSIXct(datetime), 
+         season = factor(season, labels = c("Spring","Summer","Fall","Winter")),
+         weather = factor(weather, labels = c("Clear", "Misty/Cloudy","Light Snow/Rain","Heavy Snow/Rain")))
+
+#data structure
+bike_rentals %>% str()
+
+#data summaries
+bike_rentals %>% summary()
+
+#description
+describe(bike_rentals)
+
+#cor plot
+bike_rentals %>% 
+  #Selecting only continuous/count variables
+  dplyr::select_if(is.numeric) %>% 
+  #Generating correlation matrix
+  cor() %>% 
+  #Producing corrplot
+  ggcorrplot() + 
+  ggtitle("Numeric Variable Correlations")
+
+#Univariate Boxplots
+bike_rentals %>% dplyr::select_if(is.numeric) %>% 
+  dplyr::select(-holiday, -workingday) %>% 
+  imap(.,function(var_, varname_){
+  bike_rentals %>% 
+    ggplot(aes_string(y = var_)) + 
+    geom_boxplot() + 
+    ylab(varname_) + 
+    theme_classic()
+})
+
+bike_rentals_2 <- read.csv("bike_rentals.csv")
+```
